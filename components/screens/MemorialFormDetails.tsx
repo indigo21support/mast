@@ -5,6 +5,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import {useTranslation} from 'react-i18next';
 import Icon from 'react-native-vector-icons/AntDesign';
@@ -68,9 +69,9 @@ const MemorialFormDetails = ({navigation, UI, setUI}) => {
     navigation.navigate('PdfViewer');
   };
 
-  const viewPreviousMemorialLocation = async () => {
-    navigation.navigate('PreviousMemorialMap');
-  };
+  // const viewPreviousMemorialLocation = async () => {
+  //   navigation.navigate('PreviousMemorialMap');
+  // };
 
   useEffect(() => {
     fetchData();
@@ -191,13 +192,15 @@ const MemorialFormDetails = ({navigation, UI, setUI}) => {
     getPhotos();
   }, []);
 
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      setIsMapReady(true);
-    }, 1);
+  const viewMemorialMap = () => {
+    setIsMapReady(prevValue => (prevValue = !prevValue));
+  };
 
-    return () => clearTimeout(timeout);
-  }, []);
+  // useEffect(() => {
+  //   const timeout = setTimeout(() => {}, 1);
+
+  //   return () => clearTimeout(timeout);
+  // }, []);
 
   return (
     <View style={styles.container}>
@@ -346,7 +349,7 @@ const MemorialFormDetails = ({navigation, UI, setUI}) => {
           </TouchableOpacity>
         </View>
 
-        <View style={{marginTop: 20, paddingLeft: 20, paddingRight: 20}}>
+        {/* <View style={{marginTop: 20, paddingLeft: 20, paddingRight: 20}}>
           <TouchableOpacity
             style={{
               ...globalStyles.primaryButton,
@@ -356,6 +359,20 @@ const MemorialFormDetails = ({navigation, UI, setUI}) => {
             onPress={() => viewPreviousMemorialLocation()}>
             <Text style={{...globalStyles.primaryButtonText, color: '#000'}}>
               {t('VIEW PREVIOUS MEMORIAL LOCATION')}
+            </Text>
+          </TouchableOpacity>
+        </View> */}
+
+        <View style={{marginTop: 20, paddingLeft: 20, paddingRight: 20}}>
+          <TouchableOpacity
+            style={{
+              ...globalStyles.primaryButton,
+              marginLeft: 0,
+              backgroundColor: '#dadada',
+            }}
+            onPress={() => viewMemorialMap()}>
+            <Text style={{...globalStyles.primaryButtonText, color: '#000'}}>
+              {!isMapReady ? t('VIEW MEMORIAL MAP') : t('HIDE MEMORIAL MAP')}
             </Text>
           </TouchableOpacity>
         </View>

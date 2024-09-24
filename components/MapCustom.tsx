@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -17,13 +17,14 @@ const MapCustom = () => {
   const [memorialData, setMemorialData] = useState({
     graveNumber: '',
   });
+  const [loading, setLoading] = useState(true);
 
   const xScrollViewRef = useRef<ScrollView>(null);
   const yScrollViewRef = useRef<ScrollView>(null);
 
   const fetchData = async () => {
     const graveNumber = await storage.get('graveNumber');
-    setMemorialData(prevMemorial => ({ ...prevMemorial, graveNumber }));
+    setMemorialData(prevMemorial => ({...prevMemorial, graveNumber}));
   };
 
   useEffect(() => {
@@ -40,7 +41,7 @@ const MapCustom = () => {
         "sectionId = ? and LOWER(statusName) IN('booked', 'completed', 'complete pass', 'complete fail', 'no memorial present', 'unable to locate plot') ",
         [sectionId],
         'ORDER BY id DESC',
-        'statusName, sectionId, familyName, graveNumber, direction, column, memorialId'
+        'statusName, sectionId, familyName, graveNumber, direction, column, memorialId',
       ),
       database.getRecords('Jobs', 'memorialId = ?', [memorialId]),
     ]);
@@ -80,20 +81,21 @@ const MapCustom = () => {
       totalRecords++;
     });
 
-    return { gridRecords, designatedColumn, rowCount };
+    return {gridRecords, designatedColumn, rowCount};
   };
 
   useEffect(() => {
     (async () => {
-      const { gridRecords, designatedColumn, rowCount } = await getGridData();
+      const {gridRecords, designatedColumn, rowCount} = await getGridData();
       setGrid(gridRecords);
+      setLoading(false);
 
       const xPosition =
         designatedColumn > 2 ? (designatedColumn - 2) * gridValue : 0;
       const yPosition = rowCount > 2 ? (rowCount - 2) * gridValue : 0;
 
-      xScrollViewRef.current?.scrollTo({ x: xPosition, animated: true });
-      yScrollViewRef.current?.scrollTo({ y: yPosition, animated: true });
+      xScrollViewRef.current?.scrollTo({x: xPosition, animated: true});
+      yScrollViewRef.current?.scrollTo({y: yPosition, animated: true});
     })();
   }, []);
 
@@ -128,6 +130,18 @@ const MapCustom = () => {
       </View>
     ));
   }, [grid, memorialData]);
+
+  if (loading) {
+    return (
+      <View>
+        <ActivityIndicator
+          size={68}
+          style={styles.loadingIndicator}
+          color="#ad1212"></ActivityIndicator>
+        <Text style={styles.loadingText}>Loading Map...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.rowContainer}>
@@ -185,6 +199,19 @@ const styles = StyleSheet.create({
   innerScrollView: {
     width: '100%',
     height: 700,
+  },
+  loadingIndicator: {
+    marginTop: 50,
+    justifyContent: 'center',
+    flex: 1,
+    alignContent: 'center',
+  },
+  loadingText: {
+    marginTop: 20,
+    fontSize: 18,
+    color: '#ad1212',
+    textAlign: 'center',
+    marginBottom: 20,
   },
 });
 

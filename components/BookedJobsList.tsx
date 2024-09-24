@@ -42,6 +42,8 @@ const BookedJobsList = ({UI, setUI, navigation}) => {
   const [page, setPage] = useState(0);
   const {t} = useTranslation();
 
+  // console.log(data);
+
   const setStorageItems = async (item, index) => {
     dispatch(setSurveyQuestions(JSON.parse(item.questions)));
     await storage.set('memorialId', item.memorialId.toString());
