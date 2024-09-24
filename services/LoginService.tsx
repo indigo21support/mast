@@ -23,7 +23,7 @@ export const loginUser = (email: string, password: string) => {
 
         return setGetResponse(true, response.data);
     }).catch( async (error) => {
-        console.log(error);
+        console.error(error);
         await storage.set('apiRequestError', JSON.stringify(error));
         return setGetResponse(false, []);
     });   

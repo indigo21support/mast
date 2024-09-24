@@ -118,7 +118,7 @@ const BookedJobsList = ({UI, setUI, navigation}) => {
 
     let results = await database.getRecords('Jobs', searchWhere, searchValue, 'ORDER BY id ASC LIMIT ' + (page * 20) + ', 20');
 
-    console.log(results);
+    // console.log(results);
 
     if (page === 0) {
       dispatch(setBookedJobData(results));

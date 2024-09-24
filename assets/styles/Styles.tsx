@@ -67,7 +67,7 @@ const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
     width: '100%',
-    height: 600,
+    height: '100%',
     display: 'flex',
     paddingLeft: 20,
     paddingRight: 20,

@@ -7,21 +7,26 @@ import {
   TextInput,
   ScrollView,
   Image,
+  Dimensions,
 } from 'react-native';
 import {useTranslation} from 'react-i18next';
 import Icon from 'react-native-vector-icons/AntDesign';
 import * as database from '@utils/AppSqliteDb.tsx';
 import * as storage from '@utils/AppStorage.tsx';
 import globalStyles from '@assets/styles/Styles.tsx';
-import {useSelector, useDispatch} from 'react-redux';
+import {useSelector, useStore, useDispatch} from 'react-redux';
+import store from '@redux/store';
+
 import NoRecordFound from '@components/common/NoRecordFound.tsx';
 import * as utils from '@utils/Utils';
 import CheckBox from '@react-native-community/checkbox';
 import config from '@config/config';
 import {launchCamera, launchImageLibrary} from 'react-native-image-picker';
-import {setSurveyQuestions} from '@redux/actions/surveyQuestionsActions.tsx';
 import RNFS from 'react-native-fs';
-import moment from 'moment';
+import MapViewDirections from 'react-native-maps-directions';
+import MapView from 'react-native-maps';
+import {Marker} from 'react-native-maps';
+import {setSurveyQuestions} from '@redux/actions/surveyQuestionsActions.tsx';
 
 const updateAttachmentInfo = async (item, result, setAttachment) => {
   if ('assets' in result) {
@@ -52,59 +57,33 @@ const processPhotoAttachment = async (UI, setUI, item, setAttachment) => {
     maxHeight: 768,
   };
 
-  setUI({
-    ...UI,
-    menu: true,
-    menuTitle: 'CHOOSE OPTION',
-    menuActions: [
-      {
-        title: 'TAKE A PHOTO',
-        onPress: async () => {
-          const result = await launchCamera(options);
+  const result = await launchCamera(options);
 
-          await updateAttachmentInfo(item, result, setAttachment);
-        },
-      },
-      {
-        title: 'BROWSE FROM LIBRARY',
-        onPress: async () => {
-          const result = await launchImageLibrary(options);
+  await updateAttachmentInfo(item, result, setAttachment);
 
-          await updateAttachmentInfo(item, result, setAttachment);
-        },
-      },
-      {
-        title: 'VIEW ATTACHED PHOTO(S)',
-        onPress: async () => {
-          const imgs = await getAllPhotosByMemorialAndQuestions(
-            item.questionNumber,
-          );
-          if (imgs.length === 0) {
-            alert('No attached photos found.');
-            return;
-          }
+  // setUI({
+  //   ...UI,
+  //   menu: true,
+  //   menuTitle: 'CHOOSE OPTION',
+  //   menuActions: [
+  //     {
+  //       title: 'TAKE A PHOTO',
+  //       onPress: async () => {
+  //         const result = await launchCamera(options);
 
-          let images = [];
+  //         await updateAttachmentInfo(item, result, setAttachment);
+  //       },
+  //     },
+  //     {
+  //       title: 'BROWSE FROM LIBRARY',
+  //       onPress: async () => {
+  //         const result = await launchImageLibrary(options);
 
-          for (const i in imgs) {
-            images.push({
-              id: imgs[i].id,
-              filename: imgs[i]['filename'],
-              uri:
-                'file:///data/user/0/com.frontendrn/cache/' +
-                imgs[i]['filename'],
-            });
-          }
-
-          setUI({
-            ...UI,
-            imageFiles: images,
-            imageViewer: true,
-          });
-        },
-      },
-    ],
-  });
+  //         await updateAttachmentInfo(item, result, setAttachment);
+  //       },
+  //     },
+  //   ],
+  // });
 };
 
 const getCurrentMemorials = async item => {
@@ -167,7 +146,16 @@ const insertDbRecordCompletedPhotos = async (item, key, value) => {
   );
 
   delete syncRecord[0]['deletedAt'];
-  delete syncRecord[0]['id'];
+
+  await database.insert('Sync', {
+    key: 'completedMemorialIdDelete-' + completedMemorialId,
+    Payload: `DELETE FROM completed_memorial_photos WHERE 
+            completed_memorial_id = '${completedMemorialId}' 
+            AND memorial_id = '${memorialId}'`,
+    Status: 'PENDING',
+    CreatedAt: utils.getMysqlDateTime(),
+    UpdatedAt: utils.getMysqlDateTime(),
+  });
 
   console.log(syncRecord[0]);
 
@@ -241,7 +229,6 @@ const insertOrUpdateDbRecordCompletedPhotos = async (item, key, value) => {
     );
 
     delete syncRecord[0]['deletedAt'];
-    delete syncRecord[0]['id'];
 
     const sqlCode = await utils.toSqlInsert(
       'completed_memorial_photos',
@@ -308,14 +295,32 @@ const insertOrUpdateDbRecordCompletedMemorials = async (item, key, value) => {
   const checkRecord = await getCurrentMemorials(item);
   const time = await utils.getMysqlTime();
   const dateTime = await utils.getMysqlDateTime();
+  const userStr = await storage.get('user');
+  const user = JSON.parse(userStr);
+  const category = await storage.get('currentCategory');
+
+  const state = store.getState();
+
+  await storage.set(
+    'lastLatLong',
+    '' +
+      state.geoLocation.latlong.latitude +
+      '|' +
+      state.geoLocation.latlong.longitude,
+  );
 
   const dbValue = {
     memorialId: memorialId,
     time: time,
-    geostamp: '',
+    geostamp:
+      state.geoLocation.latlong.latitude +
+      '|' +
+      state.geoLocation.latlong.longitude,
     updatedAt: dateTime,
     comments: '',
+    inspector: user['name'],
     questionNumber: item.questionNumber,
+    passFail: category,
   };
 
   if (checkRecord.length === 0) {
@@ -330,7 +335,14 @@ const insertOrUpdateDbRecordCompletedMemorials = async (item, key, value) => {
     );
 
     delete syncRecord[0]['deletedAt'];
-    delete syncRecord[0]['id'];
+
+    await database.insert('Sync', {
+      key: 'completedMemorialId-' + memorialId,
+      Payload: `DELETE FROM completed_memorials WHERE memorial_id = '${memorialId}' AND question_number = '${item.questionNumber}'`,
+      Status: 'PENDING',
+      CreatedAt: utils.getMysqlDateTime(),
+      UpdatedAt: utils.getMysqlDateTime(),
+    });
 
     const sqlCode = await utils.toSqlInsert(
       'completed_memorials',
@@ -381,14 +393,29 @@ const insertOrUpdateDbRecordCompletedMemorials = async (item, key, value) => {
       UpdatedAt: utils.getMysqlDateTime(),
     });
   }
+
+  const sqlCodeUpdate = await utils.toSqlUpdate(
+    'completed_memorials',
+    {
+      pass_fail: category,
+    },
+    "memorial_id = '" +
+      memorialId +
+      "' AND question_number IN('Q1','Q2', 'Q3') ",
+  );
+
+  await database.insert('Sync', {
+    key: 'memorialId-' + memorialId + '-update-other-question-number',
+    Payload: sqlCodeUpdate,
+    Status: 'PENDING',
+    CreatedAt: utils.getMysqlDateTime(),
+    UpdatedAt: utils.getMysqlDateTime(),
+  });
 };
 
 const PhotoGrids = ({setUI, UI, item, index, setAttachment}) => {
-  const [uiFilePath, setUiFilePath] = useState();
-
+  const [uiFilePath, setUiFilePath] = useState('default.jpg');
   const onPhotoClick = async () => {
-    console.log('clicking');
-
     const imgs = await getAllPhotosByMemorialAndQuestions('Q3');
     if (imgs.length === 0) {
       setAttachment('');
@@ -476,17 +503,15 @@ const PhotoGrids = ({setUI, UI, item, index, setAttachment}) => {
       onPress={async () => {
         await onPhotoClick();
       }}>
-      {uiFilePath !== '' && (
-        <Image
-          style={{
-            width: '100%',
-            height: '100%',
-          }}
-          source={{
-            uri: uiFilePath,
-          }}
-        />
-      )}
+      <Image
+        style={{
+          width: '100%',
+          height: '100%',
+        }}
+        source={{
+          uri: uiFilePath,
+        }}
+      />
     </TouchableOpacity>
   );
 };
@@ -519,14 +544,44 @@ const QuestionCheckboxes = ({item}) => {
   const toggleCheckboxValue = async (condition, question) => {
     const memorialId = await storage.get('memorialId');
 
+    const state = store.getState();
+
+    const key = 'check-' + memorialId + '-' + question + '-ins';
+
+    await database.remove('Sync', 'key = ?', [key]);
+
     if (condition) {
       await database.insert('CompletedMemorials', {
         memorialId: memorialId,
         time: utils.getMysqlTime(),
         questionNumber: 'Q1',
-        comments: item.question,
+        comments: question,
         passFail: 'failed',
         createdAt: utils.getMysqlDateTime(),
+      });
+
+      await database.insert('Sync', {
+        key: key,
+        Payload:
+          `
+          INSERT INTO completed_memorials SET 
+          memorial_id = '${memorialId}',
+          time = '${utils.getMysqlTime()}',
+          geostamp = '` +
+          state.geoLocation.latlong.latitude +
+          '|' +
+          state.geoLocation.latlong.longitude +
+          `',
+          question_number = 'Q1',
+          pass_fail = 'failed',
+          comments = '${question}',
+          created_at = '${utils.getMysqlDateTime()}',
+          updated_at = '${utils.getMysqlDateTime()}',
+          deleted_at = ''
+        `,
+        Status: 'PENDING',
+        CreatedAt: utils.getMysqlDateTime(),
+        UpdatedAt: utils.getMysqlDateTime(),
       });
     } else {
       await database.remove(
@@ -535,32 +590,28 @@ const QuestionCheckboxes = ({item}) => {
                 memorialId = ? AND questionNumber = ?
                 AND comments = ?
             `,
-        [memorialId, 'Q1', item.question],
+        [memorialId, 'Q1', question],
       );
     }
   };
 
   return (
-    <View>
-      {checkbox ? (
-        <View style={styles.inlineCheckbox}>
-          <Icon
-            name={'check'}
-            size={25}
-            color="green"
-            style={{
-              ...styles.icon,
-              marginRight: 10,
-            }}
-          />
-          <Text
-            style={{
-              color: '#000',
-            }}>
-            {item.question}
-          </Text>
-        </View>
-      ) : null}
+    <View style={styles.inlineCheckbox}>
+      <CheckBox
+        disabled={false}
+        value={checkbox}
+        tintColors={config.colorScheme}
+        onValueChange={newValue => {
+          setCheckbox(newValue);
+          toggleCheckboxValue(newValue, item.question);
+        }}
+      />
+      <Text
+        style={{
+          color: '#000',
+        }}>
+        {item.question}
+      </Text>
     </View>
   );
 };
@@ -597,6 +648,12 @@ const OtherCheckbox = () => {
   const toggleCheckboxValue = async (condition, question) => {
     const memorialId = await storage.get('memorialId');
 
+    const state = store.getState();
+
+    const key = 'check-' + memorialId + '-' + question + '-ins';
+
+    await database.remove('Sync', 'key = ?', [key]);
+
     if (condition) {
       await database.insert('CompletedMemorials', {
         memorialId: memorialId,
@@ -605,6 +662,30 @@ const OtherCheckbox = () => {
         comments: others,
         passFail: 'failed',
         createdAt: utils.getMysqlDateTime(),
+      });
+
+      await database.insert('Sync', {
+        key: key,
+        Payload:
+          `
+          INSERT INTO completed_memorials SET 
+          memorial_id = '${memorialId}',
+          time = '${utils.getMysqlTime()}',
+          geostamp = '` +
+          state.geoLocation.latlong.latitude +
+          '|' +
+          state.geoLocation.latlong.longitude +
+          `',
+          question_number = 'OTHERS',
+          pass_fail = 'failed',
+          comments = '${others}',
+          created_at = '${utils.getMysqlDateTime()}',
+          updated_at = '${utils.getMysqlDateTime()}',
+          deleted_at = ''
+        `,
+        Status: 'PENDING',
+        CreatedAt: utils.getMysqlDateTime(),
+        UpdatedAt: utils.getMysqlDateTime(),
       });
     } else {
       await database.remove(
@@ -639,7 +720,6 @@ const OtherCheckbox = () => {
         check[0].id,
       );
     } else {
-      // insert
       await database.insert('CompletedMemorials', {
         memorialId: memorialId,
         time: utils.getMysqlTime(),
@@ -653,81 +733,224 @@ const OtherCheckbox = () => {
 
   return (
     <View>
-      {checkbox ? (
-        <View>
-          <View style={styles.inlineCheckbox}>
-            <Icon
-              name={'check'}
-              size={25}
-              color="green"
-              style={{
-                ...styles.icon,
-                marginRight: 10,
-              }}
-            />
-            <Text
-              style={{
-                color: '#000',
-              }}>
-              {'Others'}
-            </Text>
-          </View>
+      <View style={styles.inlineCheckbox}>
+        <CheckBox
+          disabled={false}
+          value={checkbox}
+          tintColors={config.colorScheme}
+          onValueChange={newValue => {
+            setCheckbox(newValue);
+            toggleCheckboxValue(newValue, 'OTHERS');
+          }}
+        />
+        <Text
+          style={{
+            color: '#000',
+          }}>
+          {'Others'}
+        </Text>
+      </View>
 
-          <View
-            style={{
-              margin: 10,
-              marginLeft: 50,
-              padding: 10,
-
-              borderRadius: 10,
-              color: '#000',
-              height: 100,
-              opacity: checkbox ? 1 : 0.5,
-            }}>
-            <Text
-              style={{
-                color: '#000',
-                fontSize: 15,
-              }}>
-              {others}
-            </Text>
-          </View>
-        </View>
-      ) : null}
+      <TextInput
+        editable={checkbox}
+        multiline
+        numberOfLines={4}
+        maxLength={40}
+        placeholder={'Description..'}
+        placeholderTextColor={'#e5e5e5'}
+        onChangeText={text => {
+          setOthers(text);
+          setTimeout(() => {
+            setCommentData(text, 'OTHERS');
+          }, 3000);
+        }}
+        value={others}
+        style={{
+          margin: 10,
+          marginLeft: 50,
+          backgroundColor: '#fff',
+          borderRadius: 10,
+          color: '#000',
+          opacity: checkbox ? 1 : 0.5,
+        }}
+      />
     </View>
   );
 };
 
-const notInCompletedStatus = status => {
-  return (
-    [
-      'completed',
-      'complete pass',
-      'complete fail',
-      'no memorial present',
-      'unable to locate plot',
-    ].indexOf(status) === -1
-  );
-};
-
-const SurveySummaryScreen = ({navigation, UI, setUI}) => {
+const MemorialFormDetails = ({navigation, UI, setUI}) => {
+  //AIzaSyAL0UMoIJ8zlWxno4iiBwRx8ZP-1cKxzTw
+  const GOOGLE_MAPS_APIKEY = 'AIzaSyCcks0PZf2QyjME4dx1NiYaDlluMEoN1fU';
+  const dispatch = useDispatch();
   const {search, data} = useSelector(state => state.bookedJob);
   const {questions} = useSelector(state => state.surveyQuestion);
-  const dispatch = useDispatch();
   const [pageTitle, setPageTitle] = useState('');
-  const [category, setCategory] = useState('NO ANSWER YET');
-  const [currentDate, setCurrentDate] = useState('-');
-  const [inspector, setInspector] = useState('-');
-  const [currentTime, setCurrentTime] = useState('-');
-  const [memorialHeight, setMemorialHeight] = useState('NO ANSWER YET');
+  const [category, setCategory] = useState('SELECT');
+  const [memorialHeight, setMemorialHeight] = useState('SELECT');
   const [memorialHeightId, setMemorialHeightId] = useState(-1);
   const [attachment, setAttachment] = useState('');
   const [photos, setPhotos] = useState([]);
-  const [status, setStatus] = useState('');
+  const [origin, setOrigin] = useState({latitude: 0, longitude: 0});
+  const [destination, setDestination] = useState({latitude: 0, longitude: 0});
+  const [markers, setMarkers] = useState([]);
+  const [gridRowHeight, setGridGrowHeight] = useState(200);
+  const [currentGraveNumber, setCurrentGraveNumber] = useState('');
 
+  const {latlong} = useSelector(state => state.geoLocation);
   const {t} = useTranslation();
 
+  const [grids, setGrids] = useState({});
+  const [sequence, setSequence] = useState([]);
+  const [currentDirection, setCurrentDirection] = useState('');
+
+  const setStorageItems = async (item, index) => {
+    dispatch(setSurveyQuestions(JSON.parse(item['questions'])));
+    await storage.set('memorialId', item['memorialId'].toString());
+    await storage.set('graveNumber', item['graveNumber'].toString());
+    await storage.set('jobDetails', JSON.stringify(item));
+    await storage.set('memorialIndex', index.toString());
+    await storage.set('hasUpdate', '1');
+  };
+
   useEffect(() => {
+    const getGridData = async () => {
+      const sectionId = await storage.get('currentSectionId');
+
+      const records = await database.getRecords(
+        'Jobs',
+        "sectionId = ? and LOWER(statusName) IN('booked', 'completed', 'complete pass', 'complete fail', 'no memorial present', 'unable to locate plot') ",
+        [sectionId],
+        'ORDER BY id, column DESC',
+      );
+
+      let gridRecords = {};
+      let sequenceArr = [];
+      let previousDirect = 'down';
+      let totalRows = 0;
+
+      for (const i in records) {
+        const obj = records[i];
+        const column = obj['column'].toString();
+
+        if (typeof gridRecords[column] === 'undefined') {
+          gridRecords[column] = [];
+        }
+
+        if (obj['direction'] === 'left') {
+          setCurrentDirection('left');
+        }
+
+        if (obj['direction'] === 'right') {
+          setCurrentDirection('right');
+        }
+
+        gridRecords[column].push(obj);
+        totalRows++;
+      }
+
+      setGridGrowHeight(totalRows * 300);
+
+      let tmp = {};
+      let LR = {};
+
+      for (const i in gridRecords) {
+        const items = gridRecords[i];
+        let previousDirection = '';
+
+        if (typeof tmp[i] === 'undefined') {
+          tmp[i] = [];
+        }
+
+        for (const x in items) {
+          const obj = items[x];
+
+          if (previousDirection === '') {
+            previousDirection = obj['direction'];
+          }
+
+          if (obj['direction'] === 'left') {
+            const incrementTmp = (parseInt(i) + 1).toString();
+
+            if (typeof LR[i] === 'undefined') {
+              LR[i] = [];
+            }
+
+            LR[i].push(obj);
+            continue;
+          }
+
+          tmp[i].push(obj);
+
+          previousDirection = obj['direction'];
+        }
+      }
+
+      let tmp2 = {};
+
+      for (const i in tmp) {
+        const items = tmp[i];
+
+        if (typeof tmp2[i] === 'undefined') {
+          tmp2[i] = [];
+        }
+
+        const item = items[0];
+
+        if (item['direction'] === 'up' && typeof LR[i] !== 'undefined') {
+          const lrItems = LR[i];
+
+          for (const lrCtr in lrItems) {
+            const lrObj = lrItems[lrCtr];
+            tmp2[i].push(lrObj);
+          }
+        }
+
+        for (const x in items) {
+          const obj = items[x];
+
+          tmp2[i].push(obj);
+        }
+
+        if (item['direction'] === 'down') {
+          tmp2[i] = tmp2[i].reverse();
+        }
+
+        if (item['direction'] === 'down' && typeof LR[i] !== 'undefined') {
+          const lrItems = LR[i];
+
+          for (const lrCtr in lrItems) {
+            const lrObj = lrItems[lrCtr];
+            tmp2[i].push(lrObj);
+          }
+        }
+      }
+
+      setGrids(tmp2);
+    };
+
+    getGridData();
+
+    const getGeoLocation = async () => {
+      const lastLatLong = await storage.get('lastLatLong');
+      let parts = '';
+      if (lastLatLong === null) {
+        parts = latlong.latitude + '|' + latlong.longitude;
+      }
+
+      parts = lastLatLong.split('|');
+
+      setOrigin({latitude: latlong.latitude, longitude: latlong.longitude});
+
+      setDestination({
+        latitude: parseFloat(parts[0]),
+        longitude: parseFloat(parts[1]),
+      });
+
+      console.log(latlong.latitude + '-' + latlong.longitude);
+
+      setTimeout(() => getGeoLocation(), 10000);
+    };
+
     const getMemorialHeightValue = async () => {
       const memorialId = await storage.get('memorialId');
 
@@ -744,6 +967,7 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
     };
 
     getMemorialHeightValue();
+    getGeoLocation();
   }, []);
 
   useEffect(() => {
@@ -785,18 +1009,8 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
 
       if (record.length > 0) {
         if (record[0].passFail !== '') {
+          await storage.set('currentCategory', record[0].passFail);
           setCategory(record[0].passFail.toUpperCase());
-
-          const date = moment(record[0].createdAt.toUpperCase()).format(
-            'MMMM D, YYYY',
-          );
-          const time = moment(record[0].createdAt.toUpperCase()).format(
-            'h:mm A',
-          );
-
-          setCurrentDate(date);
-          setCurrentTime(time);
-          setInspector(record[0].inspector.toUpperCase());
         }
 
         if (record[0].comments !== '') {
@@ -808,92 +1022,12 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
     getCurrentRecord();
   }, []);
 
-  const isFormValid = () => {
-    let condition =
-      category !== 'NO ANSWER YET' &&
-      photos.length > 0 &&
-      memorialHeight !== 'NO ANSWER YET';
-
-    switch (category.toUpperCase()) {
-      case 'NO MEMORIAL PRESENT':
-        if (photos.length !== 0) {
-          condition = true;
-        }
-        break;
-      case 'UNABLE TO LOCATE PLOT':
-        condition = true;
-        break;
-      default:
-        console.log('no option selected');
-        break;
-    }
-
-    return condition;
-  };
-
-  const setStorageItems = async (item, index) => {
-    dispatch(setSurveyQuestions(JSON.parse(item.questions)));
-    await storage.set('memorialId', item.memorialId.toString());
-    await storage.set('graveNumber', item.graveNumber.toString());
-    await storage.set('jobDetails', JSON.stringify(item));
-    await storage.set('memorialIndex', index.toString());
-  };
-
-  const prepareForNextMemorial = async () => {
-    const sectionId = await storage.get('currentSectionId');
-    const processMemorialId = await storage.get('memorialId');
-    const key = 'section-memorial-' + sectionId + '-' + processMemorialId;
-
-    await database.remove('AppCache', 'Name = ? ', [key]);
-
-    await database.insert('AppCache', {
-      Name: key,
-      payload: 'SUBMITTED',
-    });
-
-    // await database.update('Jobs', {
-    //   statusName: 'COMPLETED'
-    // }, 'memorialId = ?', processMemorialId);
-
-    const nextJob = await database.getRecords('Jobs', 'LOWER(statusName) = ?', [
-      'booked',
-    ]);
-
-    await storage.set('hasUpdate', '1');
-
-    if (nextJob.length > 0) {
-      await setStorageItems(nextJob[0], 0);
-      navigation.pop();
-
-      navigation.navigate('MemorialDetails');
-    } else {
-      await database.update(
-        'Sections',
-        {
-          status: 'COMPLETED',
-        },
-        'originalSectionId = ? ',
-        sectionId,
-      );
-
-      await setUI({
-        ...UI,
-        alert: true,
-        alertType: 'success',
-        alertTitle: 'Completed',
-        alertMessage: t('All memorial tests have been answered successfully!'),
-      });
-
-      navigation.navigate('Dashboard');
-    }
-  };
-
   const processSubmitSurvey = async () => {
-    const memorialId = await storage.get('memorialId');
-
-    if (!isFormValid()) {
+    if (answered < questions.length) {
       return;
     }
+
+    const memorialId = await storage.get('memorialId');
 
     await database.update(
       'Sync',
@@ -906,64 +1040,13 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
       'Sync',
       {Status: 'APPROVED'},
       'Key like ?',
-      '%check-' + memorialId + '-%',
-    );
-
-    await database.update(
-      'Sync',
-      {Status: 'APPROVED'},
-      'Key like ?',
-      '%comment-' + memorialId + '-%',
-    );
-
-    await database.update(
-      'Sync',
-      {Status: 'APPROVED'},
-      'Key like ?',
       '%completedMemorialId-%',
     );
-
-    const currentCategory = await storage.get('currentCategory');
-    let keyword = '';
-
-    switch (currentCategory.toLowerCase()) {
-      case 'fail':
-        keyword = 'complete fail';
-        break;
-
-      case 'failed':
-        keyword = 'complete fail';
-        break;
-
-      case 'passed':
-        keyword = 'complete pass';
-        break;
-
-      case 'pass':
-        keyword = 'complete pass';
-        break;
-
-      case 'pass but monitor':
-        keyword = 'pass but monitor';
-        break;
-
-      case 'no memorial present':
-        keyword = 'no memorial present';
-        break;
-
-      case 'unable to locate plot':
-        keyword = 'unable to locate plot';
-        break;
-
-      default:
-        keyword = 'complete pass';
-        break;
-    }
 
     await database.update(
       'Jobs',
       {
-        statusName: keyword,
+        statusName: 'Complete Pass',
       },
       'memorialId = ?',
       memorialId,
@@ -974,7 +1057,7 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
       Payload: `
         UPDATE memorials SET status_id = (
           SELECT id FROM statuses WHERE 
-          LCASE(status) = '${keyword}' LIMIT 1
+          LCASE(status) = 'complete pass' LIMIT 1
         )
         WHERE id = '${memorialId}'
       `,
@@ -983,31 +1066,20 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
       UpdatedAt: utils.getMysqlDateTime(),
     });
 
-    await setUI({
-      ...UI,
-      alert: true,
-      alertType: 'success',
-      alertTitle: 'Completed',
-      alertMessage: t('Successfully Submitted!'),
-    });
+    setUI({...UI, refresh: UI.refresh + 1});
 
-    prepareForNextMemorial();
+    navigation.navigate('Dashboard');
   };
 
   const fetchData = async () => {
     const memorialId = await storage.get('memorialId');
     const graveNumber = await storage.get('graveNumber');
-
-    setPageTitle(t('Test Summary - ' + graveNumber));
-
-    const jobs = await database.getRecords('Jobs', 'memorialId = ?', [
+    const jd = await database.getRecords('Jobs', 'memorialId = ?', [
       memorialId,
     ]);
 
-    console.log(jobs);
-    if (jobs.length > 0) {
-      setStatus(jobs[0]['statusName']);
-    }
+    setPageTitle(t(jd[0]['familyName'] + ' - ' + graveNumber));
+    setCurrentGraveNumber(graveNumber);
   };
 
   const updateMemorialHeightData = async data => {
@@ -1079,6 +1151,8 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
           onPress: async () => {
             setCategory('PASS');
 
+            await storage.set('currentCategory', 'passed');
+
             await insertOrUpdateDbRecordCompletedMemorials(
               {
                 questionNumber: 'Q1',
@@ -1092,6 +1166,8 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
           title: t('FAIL'),
           onPress: async () => {
             setCategory('FAIL');
+
+            await storage.set('currentCategory', 'failed');
 
             await insertOrUpdateDbRecordCompletedMemorials(
               {
@@ -1107,6 +1183,8 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
           onPress: async () => {
             setCategory('PASS BUT MONITOR');
 
+            await storage.set('currentCategory', 'pass but monitor');
+
             await insertOrUpdateDbRecordCompletedMemorials(
               {
                 questionNumber: 'Q1',
@@ -1121,12 +1199,30 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
           onPress: async () => {
             setCategory('NO MEMORIAL PRESENT');
 
+            await storage.set('currentCategory', 'no memorial present');
+
             await insertOrUpdateDbRecordCompletedMemorials(
               {
                 questionNumber: 'Q1',
               },
               'passFail',
               'no memorial present',
+            );
+          },
+        },
+        {
+          title: t('UNABLE TO LOCATE PLOT'),
+          onPress: async () => {
+            setCategory('UNABLE TO LOCATE PLOT');
+
+            await storage.set('currentCategory', 'unable to locate plot');
+
+            await insertOrUpdateDbRecordCompletedMemorials(
+              {
+                questionNumber: 'Q1',
+              },
+              'passFail',
+              'unable to locate plot',
             );
           },
         },
@@ -1148,8 +1244,48 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
     fetchData();
   };
 
+  const viewSummaryDetails = async () => {
+    navigation.pop();
+    navigation.navigate('SurveySummary');
+  };
+
+  const viewPDF = async () => {
+    navigation.navigate('PdfViewer');
+  };
+
   const navigateToSendMessage = () => {
     navigation.navigate('SendMessage', {});
+  };
+
+  const {width, height} = Dimensions.get('window');
+  const ASPECT_RATIO = width / height;
+  const LATITUDE_DELTA = 0.0322;
+  const LONGITUDE_DELTA = LATITUDE_DELTA * ASPECT_RATIO;
+
+  let previousDirection = '';
+  let carryOver = [];
+
+  const [displayGrid, setDisplayGrid] = useState({});
+
+  useEffect(() => {
+    if (currentDirection === 'left') {
+      setDisplayGrid(Object.keys(grids).reverse());
+    } else if (currentDirection === 'right') {
+      setDisplayGrid(Object.keys(grids));
+    }
+  }, [grids]);
+
+  const onItemCLick = async (item, index) => {
+    if (item['statusName'].toString().toLowerCase() === 'booked') {
+      console.log(item);
+      await setStorageItems(item, index);
+      navigation.pop();
+      navigation.navigate('MemorialDetails');
+    }
+  };
+
+  const viewPreviousMemorialLocation = async () => {
+    navigation.navigate('PreviousMemorialMap');
   };
 
   return (
@@ -1161,6 +1297,7 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
           <Icon
             name={'arrowleft'}
             size={25}
+            color="#fff"
             style={{
               ...styles.icon,
               marginRight: 10,
@@ -1182,85 +1319,89 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
         />
       </TouchableOpacity>
 
-      <ScrollView>
-        {/* <Text style={styles.genericQuestionMsg}>
-        {t('Q1. Does memorial pass current safety test requirements')}
-      </Text> */}
+      <ScrollView style={styles.container}>
+        <Text style={styles.genericQuestionMsg}>
+          {t('Q1. Does memorial pass current safety test requirements')}
+        </Text>
 
-        <View style={styles.iCustomRow}>
-          <Text style={styles.iCustomRowDescription}>
-            {t('Memorial Status')}
-          </Text>
-          <Text style={styles.iCustomRowValue}>{category}</Text>
-        </View>
+        <TouchableOpacity
+          onPress={() => viewActionMenu()}
+          style={{
+            ...styles.itemCategory,
+            marginTop: 0,
+            marginLeft: 10,
+            marginRight: 10,
+            width: 'auto',
+          }}>
+          <Text style={styles.itemCategoryText}>{category}</Text>
+        </TouchableOpacity>
 
-        {category !== 'NO MEMORIAL PRESENT' ? (
-          <View style={styles.iCustomRow}>
-            <Text style={styles.iCustomRowDescription}>
-              {t('Memorial Height')}
+        {category === 'FAIL' || category === 'FAILED' ? (
+          <View>
+            <Text
+              style={{
+                ...styles.genericQuestionMsg,
+                marginLeft: 50,
+              }}>
+              Q1.A Reason for failure test?
             </Text>
-            <Text style={styles.iCustomRowValue}>{memorialHeight}</Text>
+
+            {questions.map((item, index) => (
+              <QuestionCheckboxes key={index} item={item} />
+            ))}
+            {<OtherCheckbox />}
           </View>
         ) : null}
 
-        <View style={styles.iCustomRow}>
-          <Text style={styles.iCustomRowDescription}>{t('Date')}</Text>
-          <Text style={styles.iCustomRowValue}>{currentDate}</Text>
-        </View>
+        {category !== 'NO MEMORIAL PRESENT' ? (
+          <View>
+            <Text style={styles.genericQuestionMsg}>
+              {t('Q2. What is the memorial height?')}
+            </Text>
 
-        <View style={styles.iCustomRow}>
-          <Text style={styles.iCustomRowDescription}>{t('Time')}</Text>
-          <Text style={styles.iCustomRowValue}>{currentTime}</Text>
-        </View>
-
-        <View style={styles.iCustomRow}>
-          <Text style={styles.iCustomRowDescription}>{t('Inspector')}</Text>
-          <Text style={styles.iCustomRowValue}>{inspector}</Text>
-        </View>
-
-        {/* {category === 'FAIL' || category === 'FAILED' ? (
-        <View>
-          <Text
-            style={{
-              ...styles.genericQuestionMsg,
-              marginLeft: 50,
-            }}>
-            Q1.A Reason for failure test?
-          </Text>
-
-          {questions.map((item, index) => (
-            <QuestionCheckboxes key={index} item={item} />
-          ))}
-          {<OtherCheckbox />}
-        </View>
-      ) : null} */}
-
-        {/* <Text style={styles.genericQuestionMsg}>
-        {t('Q2. What is the memorial height?')}
-      </Text>
-
-      <View
-        style={{
-          ...styles.itemCategory,
-          marginTop: 0,
-          marginLeft: 10,
-          marginRight: 10,
-          width: 'auto',
-        }}>
-        <Text style={styles.itemCategoryText}>{memorialHeight}</Text>
-      </View> */}
-
-        {/* <Text style={{...styles.genericQuestionMsg}}>
-        {t('Q3. Photograph of memorial')}
-      </Text> */}
-
-        <View style={styles.iCustomRow}>
-          <Text style={styles.iCustomRowDescriptionPhotos}>{t('Photos')}</Text>
-          <Text style={styles.iCustomRowValue}>{t('')}</Text>
-        </View>
-        {photos.length === 0 ? (
-          <Text style={styles.noPhotos}>No Photo(s) attached yet</Text>
+            <TouchableOpacity
+              onPress={() => viewMemorialHeight()}
+              style={{
+                ...styles.itemCategory,
+                marginTop: 0,
+                marginLeft: 10,
+                marginRight: 10,
+                width: 'auto',
+              }}>
+              <Text style={styles.itemCategoryText}>{memorialHeight}</Text>
+            </TouchableOpacity>
+          </View>
         ) : null}
+
+        <View style={styles.column}>
+          <Text style={{...styles.genericQuestionMsg, width: '85%'}}>
+            {t('Q3. Photograph of memorial')}
+          </Text>
+          <TouchableOpacity
+            onPress={() => {
+              processPhotoAttachment(
+                UI,
+                setUI,
+                {
+                  questionNumber: 'Q3',
+                },
+                setAttachment,
+                t,
+              );
+            }}
+            style={{
+              width: '15%',
+              display: 'flex',
+              justifyContent: 'center',
+            }}>
+            <Icon
+              name={'plus'}
+              size={25}
+              color="#74EE15"
+              style={{...styles.iconBooked}}
+            />
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.photosContainer}>
           {photos.map((item, index) => (
@@ -1275,64 +1416,181 @@ const SurveySummaryScreen = ({navigation, UI, setUI}) => {
           ))}
         </View>
 
-        {notInCompletedStatus(status.toLowerCase()) ? (
-          <View
+        <View style={{marginTop: 20, paddingLeft: 20, paddingRight: 20}}>
+          <TouchableOpacity
             style={{
-              marginTop: 20,
-              paddingLeft: 20,
-              paddingRight: 20,
-              marginBottom: 30,
-            }}>
-            <TouchableOpacity
-              style={{
-                ...globalStyles.primaryButton,
-                marginLeft: 0,
-                opacity: isFormValid() ? 1 : 0.5,
-              }}
-              onPress={() => {
-                processSubmitSurvey();
-              }}>
-              <Text style={globalStyles.primaryButtonText}>{t('SUBMIT')}</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
+              ...globalStyles.primaryButton,
+              marginLeft: 0,
+            }}
+            onPress={() => viewSummaryDetails()}>
+            <Text style={globalStyles.primaryButtonText}>
+              {t('VIEW SUMMARY')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={{marginTop: 20, paddingLeft: 20, paddingRight: 20}}>
+          <TouchableOpacity
+            style={{
+              ...globalStyles.primaryButton,
+              marginLeft: 0,
+              backgroundColor: '#dadada',
+            }}
+            onPress={() => viewPDF()}>
+            <Text style={{...globalStyles.primaryButtonText, color: '#000'}}>
+              {t('VIEW ROUTE PDF GUIDE')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={{marginTop: 20, paddingLeft: 20, paddingRight: 20}}>
+          <TouchableOpacity
+            style={{
+              ...globalStyles.primaryButton,
+              marginLeft: 0,
+              backgroundColor: '#dadada',
+            }}
+            onPress={() => viewPreviousMemorialLocation()}>
+            <Text style={{...globalStyles.primaryButtonText, color: '#000'}}>
+              {t('VIEW PREVIOUS MEMORIAL LOCATION')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView
+          style={{...styles.gridBoxes, height: gridRowHeight}}
+          nestedScrollEnabled={true}
+          horizontal={true}>
+          {(currentDirection === 'left'
+            ? Object.keys(grids).reverse()
+            : Object.keys(grids)
+          ).map((col, index) => {
+            let hasNextGrave = false;
+
+            return (
+              <View style={styles.gridColumn} key={index + 'parent'}>
+                {grids[col].map((item, index2) => {
+                  let color = utils.handleColorCode(item);
+                  if (hasNextGrave) {
+                    color = 'green';
+                    hasNextGrave = false;
+                  }
+
+                  if (item['direction'] === 'down') {
+                    if (currentGraveNumber === item['graveNumber']) {
+                      hasNextGrave = true;
+                    }
+                  }
+
+                  if (item['direction'] === 'up') {
+                    if (
+                      typeof grids[col][index2 + 1] !== 'undefined' &&
+                      currentGraveNumber ===
+                        grids[col][index2 + 1]['graveNumber']
+                    ) {
+                      color = 'green';
+                    }
+                  }
+
+                  return (
+                    <TouchableOpacity
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      key={index2 + 'sub'}
+                      onPress={() => {
+                        onItemCLick(item, index2);
+                      }}>
+                      <View
+                        style={{
+                          ...styles.gridbox1,
+                          backgroundColor: utils.handleColorCode(item),
+                          borderColor: color,
+                          borderWidth: 3,
+                        }}>
+                        <Icon
+                          name={'arrow' + item.direction}
+                          size={20}
+                          color="#000"
+                          style={{
+                            ...styles.icon,
+                          }}
+                        />
+                        <Text style={{color: '#000'}}>{item.graveNumber}</Text>
+                        {/* <Text style={{color: '#000', fontWeight: 'bold', fontSize: 10}}>{item.statusName + ' - ' + item.direction + ' - ' + item.id + ' - ' + item.column}</Text> */}
+                        <Text
+                          style={{
+                            color: '#000',
+                            fontWeight: 'bold',
+                            fontSize: 10,
+                          }}>
+                          {item.familyName}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            );
+          })}
+        </ScrollView>
       </ScrollView>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  iCustomRowDescription: {
-    color: '#000',
-    fontSize: 16,
-    width: '40%',
+  gridbox1: {
+    backgroundColor: 'white',
+    width: '100%',
+    height: 80,
     display: 'flex',
+    alignItems: 'center',
     justifyContent: 'center',
-    textAlign: 'right',
-    paddingRight: 20,
+    marginTop: 30,
+    paddingTop: 10,
+    paddingBottom: 10,
   },
-  iCustomRowDescriptionPhotos: {
-    color: '#000',
-    fontSize: 16,
-    width: '40%',
-    display: 'flex',
-    justifyContent: 'center',
-    textAlign: 'left',
-    paddingLeft: 20,
+  boxes: {
+    backgroundColor: 'blue',
+    width: '100%',
+    height: 60,
   },
-  iCustomRowValue: {
+  gridColumn: {
+    width: 150,
+    height: '100%',
+    marginRight: 15,
+    marginLeft: 15,
+  },
+  up: {
+    height: 20,
+    width: 20,
+    backgroundColor: 'blue',
+  },
+  down: {
+    height: 20,
+    width: 20,
+    backgroundColor: 'blue',
+  },
+  gridText: {
+    fontSize: 12,
     color: '#000',
-    fontSize: 16,
     fontWeight: 'bold',
-    width: '60%',
   },
-  iCustomRow: {
-    marginTop: 10,
-    display: 'flex',
-    padding: 10,
-    flexDirection: 'row',
-    justifyContent: 'center',
+  gridPill: {
+    width: 150,
+    height: 60,
+    padding: 20,
     backgroundColor: '#fff',
+    marginTop: 10,
+  },
+  gridBoxes: {
+    width: '100%',
+    height: 3000,
+    marginTop: 30,
+    backgroundColor: '#dadada',
   },
   photosContainer: {
     display: 'flex',
@@ -1349,7 +1607,6 @@ const styles = StyleSheet.create({
   genericQuestionMsg: {
     color: '#000',
     margin: 10,
-
     backgroundColor: '#fff',
     padding: 10,
     borderRadius: 10,
@@ -1362,11 +1619,6 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-  noPhotos: {
-    color: '#000',
-    fontSize: 18,
-    padding: 10,
-  },
   summaryTextValue: {
     color: '#000',
     fontSize: 15,
@@ -1417,7 +1669,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#000',
     width: '100%',
-
+    backgroundColor: '#fff',
     marginTop: 20,
     borderRadius: 10,
     borderWidth: 0.5,
@@ -1428,7 +1680,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#000',
     width: '100%',
-
+    backgroundColor: '#fff',
     marginTop: 10,
     borderRadius: 10,
     borderWidth: 0.5,
@@ -1464,4 +1716,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default SurveySummaryScreen;
+export default MemorialFormDetails;

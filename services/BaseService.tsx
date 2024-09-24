@@ -17,8 +17,7 @@ axios.interceptors.response.use(response => {
 
 export const initAxiosHttp: unknown = async useUrlEncodeForm => {
   const authorization = await AsyncStorage.getItem('accessToken');
-  console.log(authorization);
-  
+
   let objHeader = {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-cache',
@@ -42,8 +41,6 @@ export const initAxiosHttp: unknown = async useUrlEncodeForm => {
   console.log(JSON.stringify(objHeader));
 
   const baseUrl = await storage.get('baseUrl');
-  console.log(objHeader);
-  throw new Error('test');
 
   const http = axios.create({
     baseURL: baseUrl,

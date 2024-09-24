@@ -120,7 +120,7 @@ const DashboardScreen = ({navigation, UI, setUI}) => {
     , ['APPROVED']
     );
 
-    console.log("sync length is " + results.length);
+    // console.log("sync length is " + results.length);
     try {
         if(results.length !== 0) {
           const response = await syncService.postSyncData(results);
@@ -136,7 +136,7 @@ const DashboardScreen = ({navigation, UI, setUI}) => {
         const fileSync = await database.getRecords('FileSync', 
         'Status = ? LIMIT 5', ['APPROVED']);
 
-        console.log('file sync count is ' + fileSync.length);
+        // console.log('file sync count is ' + fileSync.length);
 
         if (fileSync.length !== 0) {
           for(const i in fileSync) {

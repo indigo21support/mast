@@ -212,6 +212,7 @@ export const getRecords: unknown = async (
   whereCondition: string,
   whereArray: [],
   addons: '',
+  columns: string = '',
 ) => {
   const responseObj = [];
   const db = await getDBConnection();
@@ -219,7 +220,7 @@ export const getRecords: unknown = async (
   addons = addons ?? '';
 
   const results = await db.executeSql(
-    `SELECT * FROM ${table}` +
+    `SELECT ${columns !== '' ? columns : '*'}  FROM ${table}` +
       (whereCondition !== '' ? ' WHERE ' + whereCondition : '') +
       ' ' +
       addons +
